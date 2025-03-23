@@ -113,14 +113,18 @@ class LTXVideoModel:
         vae = vae.to(device).to(torch.bfloat16)
         text_encoder = text_encoder.to(device).to(torch.bfloat16)
         
-        # Create pipeline
+        # Create pipeline with None values for prompt enhancer components
         self.pipeline = LTXVideoPipeline(
             transformer=transformer,
             patchifier=patchifier,
             text_encoder=text_encoder,
             tokenizer=tokenizer,
             scheduler=scheduler,
-            vae=vae
+            vae=vae,
+            prompt_enhancer_image_caption_model=None,
+            prompt_enhancer_image_caption_processor=None,
+            prompt_enhancer_llm_model=None,
+            prompt_enhancer_llm_tokenizer=None
         )
         
         # Enable CPU offloading for VRAM optimization
@@ -346,6 +350,7 @@ class LTXVideoModel:
             stg_scale=stg_scale,
             do_rescaling=stg_rescale != 1,
             rescaling_scale=stg_rescale,
+            enhance_prompt=False,
         )
         
         # Crop the padded images to the desired resolution and number of frames
@@ -461,7 +466,8 @@ class LTXVideoModel:
             stg_scale=stg_scale,
             do_rescaling=stg_rescale != 1,
             rescaling_scale=stg_rescale,
-            conditioning_items=conditioning_items
+            conditioning_items=conditioning_items,
+            enhance_prompt=False,
         )
         
         # Crop the padded images to the desired resolution and number of frames
