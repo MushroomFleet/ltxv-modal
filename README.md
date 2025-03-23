@@ -1,5 +1,7 @@
 # 🚀✨ LTXV-VIDEO MODAL API ✨🚀
 
+!! UNDER CONSTRUCTION !!
+
 > *A serverless API for LTX-Video text-to-video and image-to-video generation* 🎬🎨
 
 Generate high-quality videos with the power of the LTX-Video model in a **SERVERLESS** ☁️ environment using Modal! No more GPU hassles! No more dependency conflicts! Just pure, beautiful video generation! 🤯
