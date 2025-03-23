@@ -1,0 +1,32 @@
+# Dependencies for the LTXV-Modal API
+# Note: For deployment, we use run_commands to handle the PyTorch CUDA dependencies directly
+# This file is for local development and reference
+
+# PyTorch with CUDA support
+torch==2.5.1+cu121
+torchvision
+torchaudio
+
+# LTX-Video specific
+diffusers>=0.28.2
+transformers>=4.47.2
+sentencepiece>=0.1.96
+huggingface-hub~=0.25.2
+einops
+timm
+imageio[ffmpeg]
+accelerate
+matplotlib
+numpy
+
+# API tools
+fastapi[standard]
+requests>=2.28.0
+
+# Modal for deployment
+modal>=0.55.0
+
+# Installation for local development: 
+# pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+
+# For Modal deployment, the dependencies are handled in ltxv_app.py using run_commands
