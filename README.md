@@ -44,7 +44,7 @@ The implementation uses **Modal Volumes** to store model weights, making everyth
 
 3. 📥 **Clone this repository**:
    ```bash
-   git clone https://github.com/yourusername/ltxv-modal
+   git clone https://github.com/MushroomFleet/ltxv-modal
    cd ltxv-modal
    ```
 
