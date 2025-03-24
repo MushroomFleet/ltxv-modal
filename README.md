@@ -2,6 +2,8 @@
 
 > *A serverless API for LTX-Video text-to-video and image-to-video generation* 🎬🎨
 
+! UNDER CONSTRUCTION !
+
 Generate high-quality videos with the power of the LTX-Video model in a **SERVERLESS** ☁️ environment using Modal! No more GPU hassles! No more dependency conflicts! Just pure, beautiful video generation! 🤯
 
 ![LTX-Video](https://img.shields.io/badge/LTX--Video-2B%20Parameters-blueviolet) ![GPU](https://img.shields.io/badge/GPU-A100--40GB-brightgreen) ![Modal](https://img.shields.io/badge/Platform-Modal-blue)
