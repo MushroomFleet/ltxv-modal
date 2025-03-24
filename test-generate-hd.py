@@ -10,6 +10,7 @@ import base64
 import json
 import argparse
 import time
+from datetime import datetime
 
 # The URL needs to be updated with your actual deployment URL
 BASE_URL = "https://yourname--ltxv-video"
@@ -27,7 +28,7 @@ def test_generate_video(output_file="test_output.mp4", display=False):
         "num_frames": 73, # Fewer frames for faster test
         "frame_rate": 25,
         "guidance_scale": 3.0,
-        "num_inference_steps": 30, # Fewer steps for faster test
+        "num_inference_steps": 20, # Fewer steps for faster test
         "stg_scale": 1.0,
         "stg_rescale": 0.7
     }
@@ -37,7 +38,7 @@ def test_generate_video(output_file="test_output.mp4", display=False):
     info_url = f"{BASE_URL}-ltxvideomodel-info.modal.run"
     
     try:
-        info_response = requests.get(info_url, timeout=300)
+        info_response = requests.get(info_url, timeout=30)
         if info_response.status_code == 200:
             model_info = info_response.json()
             print("\nModel Information:")
@@ -74,9 +75,15 @@ def test_generate_video(output_file="test_output.mp4", display=False):
         # Save the video
         if "video" in result:
             video_data = base64.b64decode(result["video"])
-            with open(output_file, "wb") as f:
+            
+            # Add timestamp to filename
+            base_name, extension = os.path.splitext(output_file)
+            timestamp = datetime.now().strftime("%m%d_%H%M")
+            timestamped_filename = f"{base_name}_{timestamp}{extension}"
+            
+            with open(timestamped_filename, "wb") as f:
                 f.write(video_data)
-            print(f"✅ Video saved to {output_file}")
+            print(f"✅ Video saved to {timestamped_filename}")
             
             # Get the reported generation time from the API
             api_gen_time = result.get("generation_time", "unknown")
@@ -91,11 +98,11 @@ def test_generate_video(output_file="test_output.mp4", display=False):
                     import subprocess
                     
                     if platform.system() == 'Windows':
-                        os.startfile(output_file)
+                        os.startfile(timestamped_filename)
                     elif platform.system() == 'Darwin':  # macOS
-                        subprocess.run(['open', output_file], check=True)
+                        subprocess.run(['open', timestamped_filename], check=True)
                     else:  # Linux
-                        subprocess.run(['xdg-open', output_file], check=True)
+                        subprocess.run(['xdg-open', timestamped_filename], check=True)
                 except Exception as e:
                     print(f"Could not open video automatically: {e}")
                     
