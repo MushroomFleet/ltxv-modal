@@ -19,6 +19,7 @@ from PIL import Image
 import subprocess
 import sys
 import platform
+from datetime import datetime
 
 # Replace with your actual deployment URL after deploying
 # The URL will look like: https://yourname--ltxv-video-ltxvideomodel-generate-video-api.modal.run
@@ -103,13 +104,19 @@ def generate_video(
         # Save the video
         if "video" in result:
             video_data = base64.b64decode(result["video"])
-            with open(save_path, "wb") as f:
+            
+            # Add timestamp to filename
+            base_name, extension = os.path.splitext(save_path)
+            timestamp = datetime.now().strftime("%m%d_%H%M")
+            timestamped_filename = f"{base_name}_{timestamp}{extension}"
+            
+            with open(timestamped_filename, "wb") as f:
                 f.write(video_data)
-            print(f"Video saved to {save_path}")
+            print(f"Video saved to {timestamped_filename}")
             
             # Open the video if requested
             if open_video:
-                open_file(save_path)
+                open_file(timestamped_filename)
         
         return result
     except requests.exceptions.RequestException as e:
@@ -218,13 +225,19 @@ def generate_conditioned_video(
         # Save the video
         if "video" in result:
             video_data = base64.b64decode(result["video"])
-            with open(save_path, "wb") as f:
+            
+            # Add timestamp to filename
+            base_name, extension = os.path.splitext(save_path)
+            timestamp = datetime.now().strftime("%m%d_%H%M")
+            timestamped_filename = f"{base_name}_{timestamp}{extension}"
+            
+            with open(timestamped_filename, "wb") as f:
                 f.write(video_data)
-            print(f"Video saved to {save_path}")
+            print(f"Video saved to {timestamped_filename}")
             
             # Open the video if requested
             if open_video:
-                open_file(save_path)
+                open_file(timestamped_filename)
         
         return result
     except requests.exceptions.RequestException as e:
@@ -343,13 +356,19 @@ def generate_multi_conditioned_video(
         # Save the video
         if "video" in result:
             video_data = base64.b64decode(result["video"])
-            with open(save_path, "wb") as f:
+            
+            # Add timestamp to filename
+            base_name, extension = os.path.splitext(save_path)
+            timestamp = datetime.now().strftime("%m%d_%H%M")
+            timestamped_filename = f"{base_name}_{timestamp}{extension}"
+            
+            with open(timestamped_filename, "wb") as f:
                 f.write(video_data)
-            print(f"Video saved to {save_path}")
+            print(f"Video saved to {timestamped_filename}")
             
             # Open the video if requested
             if open_video:
-                open_file(save_path)
+                open_file(timestamped_filename)
         
         return result
     except requests.exceptions.RequestException as e:
@@ -431,7 +450,8 @@ def batch_generate(
                 if "video" in video_result:
                     # Create a filename from the prompt
                     prompt = video_result["prompt"]
-                    filename = f"{i+1:03d}_{prompt[:30].replace(' ', '_')}.mp4"
+                    timestamp = datetime.now().strftime("%m%d_%H%M")
+                    filename = f"{i+1:03d}_{prompt[:30].replace(' ', '_')}_{timestamp}.mp4"
                     filepath = os.path.join(output_dir, filename)
                     
                     # Save the video
