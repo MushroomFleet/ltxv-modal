@@ -18,7 +18,7 @@ BASE_URL = "https://yourname--ltxv-video"
 def test_generate_video(output_file="test_output.mp4", display=False):
     """Run a test video generation with a specific prompt."""
     # Test parameters
-    prompt = "A cat playing with a ball of yarn, cinematic lighting, detailed fur, playful mood"
+    prompt = "A man with graying temples and wire-rimmed glasses looks down and then back up while responding. The man wears a charcoal suit jacket and striped tie, his mouth tightening at the corners; he gestures slightly with his right hand. The camera holds steady on his face, capturing his subtle expressions. The background is softly blurred, with warm lighting from the right side. The scene appears to be real-life footage."
     
     # API parameters
     params = {

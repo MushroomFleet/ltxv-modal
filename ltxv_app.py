@@ -19,17 +19,40 @@ MODEL_MOUNT_PATH = "/vol/models/ltxv-video"
 # Define the image with required dependencies
 image = (
     modal.Image.debian_slim()
+    # Install FastAPI with standard extras and minimum version
+    .pip_install("fastapi[standard]>=0.100.0")
+    # Install Python dependencies in a single pip_install call
+    .pip_install(
+        "torch==2.5.1+cu121", 
+        "torchvision", 
+        "torchaudio", 
+        "diffusers>=0.28.2", 
+        "transformers>=4.47.2", 
+        "sentencepiece>=0.1.96", 
+        "accelerate", 
+        "huggingface-hub~=0.25.2",
+        "imageio[ffmpeg]", 
+        "einops", 
+        "timm", 
+        "matplotlib", 
+        "numpy",
+        extra_index_url="https://download.pytorch.org/whl/cu121"
+    )
+    # Install LTX-Video directly from GitHub
     .run_commands(
-        # Install core dependencies
-        "pip install torch==2.5.1+cu121 torchvision torchaudio diffusers>=0.28.2 transformers>=4.47.2 sentencepiece>=0.1.96 'fastapi[standard]' accelerate huggingface-hub~=0.25.2 --extra-index-url https://download.pytorch.org/whl/cu121",
-        # Install additional dependencies
-        "pip install imageio[ffmpeg] einops timm matplotlib numpy",
-        # Install LTX-Video directly from GitHub zip (no git required)
         "pip install https://github.com/Lightricks/LTX-Video/archive/refs/heads/main.zip"
     )
 )
 
-@app.cls(gpu="A100-40GB", image=image, volumes={MODEL_MOUNT_PATH: model_volume})
+@app.cls(
+    gpu="A100-40GB", 
+    image=image, 
+    volumes={MODEL_MOUNT_PATH: model_volume},
+    scaledown_window=300,  # Keep containers warm for 5 minutes
+    min_containers=1,      # Always keep at least one container warm
+    buffer_containers=1,   # Reduced from 2 to 1 for more cost-effective solo profile
+    enable_memory_snapshot=True   # Enable memory snapshots for faster cold starts
+)
 class LTXVideoModel:
     """LTX-Video model for text-to-video generation served via Modal."""
     
@@ -40,9 +63,10 @@ class LTXVideoModel:
         vae_config_file = os.path.join(model_dir, "vae", "config.json")
         return os.path.exists(vae_config_file)
     
-    @modal.enter()
-    def load_model(self):
-        """Load the model during container initialization."""
+    # Step 1: First enter method that runs during snapshot creation (loads to CPU)
+    @modal.enter(snap=True)
+    def load_model_to_cpu(self):
+        """Load the model to CPU memory during snapshot creation."""
         import time
         from huggingface_hub import snapshot_download
 
@@ -52,13 +76,13 @@ class LTXVideoModel:
         repo_id = "Lightricks/LTX-Video"
         local_model_path = MODEL_MOUNT_PATH
 
-        print("Loading LTX-Video model...")
+        print("Loading LTX-Video model to CPU memory...")
         
         try:
             if self._model_exists_in_volume():
                 print(f"Loading model from volume at: {local_model_path}")
-                self._initialize_pipeline(local_model_path)
-                print(f"Model loaded from volume in {time.time() - start_time:.2f} seconds")
+                self._initialize_pipeline_cpu(local_model_path)
+                print(f"Model loaded to CPU memory in {time.time() - start_time:.2f} seconds")
             else:
                 print(f"Model not found in volume. Downloading from HuggingFace: {repo_id}")
                 # Download the entire model repository from HuggingFace
@@ -71,20 +95,41 @@ class LTXVideoModel:
                 )
                 
                 print(f"Model repository downloaded to: {local_model_path}")
-                self._initialize_pipeline(local_model_path)
+                self._initialize_pipeline_cpu(local_model_path)
                 
                 # Commit changes to volume
                 model_volume.commit()
                 print(f"Model saved to volume successfully in {time.time() - start_time:.2f} seconds")
             
-            print(f"Model fully initialized and ready in {time.time() - start_time:.2f} seconds")
+            print(f"Model fully initialized on CPU in {time.time() - start_time:.2f} seconds")
         except Exception as e:
             print(f"Error loading model: {e}")
             # Re-raise to ensure Modal knows there was a problem
             raise
     
-    def _initialize_pipeline(self, model_path):
-        """Initialize the LTX-Video pipeline with components."""
+    # Step 2: Second enter method that runs after snapshot restoration (moves to GPU)
+    @modal.enter(snap=False)
+    def move_model_to_gpu(self):
+        """Move the model from CPU to GPU after snapshot restoration."""
+        import time
+        start_time = time.time()
+        
+        print("Moving model from CPU to GPU...")
+        device = "cuda"
+        
+        # Move models to GPU and convert to bfloat16
+        self.components["transformer"] = self.components["transformer"].to(device).to(torch.bfloat16)
+        self.components["vae"] = self.components["vae"].to(device).to(torch.bfloat16)
+        self.components["text_encoder"] = self.components["text_encoder"].to(device).to(torch.bfloat16)
+        
+        # Update pipeline device
+        self.pipeline = self.pipeline.to(device)
+        
+        print(f"Model moved to GPU in {time.time() - start_time:.2f} seconds")
+    
+    def _initialize_pipeline_cpu(self, model_path):
+        """Initialize the LTX-Video pipeline with components loaded concurrently to CPU."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         from transformers import T5EncoderModel, T5Tokenizer
         from ltx_video.models.autoencoders.causal_video_autoencoder import CausalVideoAutoencoder
         from ltx_video.models.transformers.symmetric_patchifier import SymmetricPatchifier
@@ -92,43 +137,59 @@ class LTXVideoModel:
         from ltx_video.pipelines.pipeline_ltx_video import LTXVideoPipeline
         from ltx_video.schedulers.rf import RectifiedFlowScheduler
         
-        device = "cuda"
-        
-        # Initialize pipeline components
-        vae = CausalVideoAutoencoder.from_pretrained(model_path)
-        transformer = Transformer3DModel.from_pretrained(model_path)
-        scheduler = RectifiedFlowScheduler.from_pretrained(model_path)
-        
+        device = "cpu"  # Load to CPU first for snapshotting
         text_encoder_model_path = "PixArt-alpha/PixArt-XL-2-1024-MS"
-        text_encoder = T5EncoderModel.from_pretrained(
-            text_encoder_model_path, subfolder="text_encoder"
-        )
-        tokenizer = T5Tokenizer.from_pretrained(
-            text_encoder_model_path, subfolder="tokenizer"
-        )
+        
+        # Define loading functions
+        def load_vae():
+            return CausalVideoAutoencoder.from_pretrained(model_path)
+        
+        def load_transformer():
+            return Transformer3DModel.from_pretrained(model_path)
+        
+        def load_scheduler():
+            return RectifiedFlowScheduler.from_pretrained(model_path)
+        
+        def load_text_encoder():
+            return T5EncoderModel.from_pretrained(
+                text_encoder_model_path, subfolder="text_encoder"
+            )
+        
+        def load_tokenizer():
+            return T5Tokenizer.from_pretrained(
+                text_encoder_model_path, subfolder="tokenizer"
+            )
+        
+        # Load models concurrently
+        self.components = {}
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_component = {
+                executor.submit(load_vae): "vae",
+                executor.submit(load_transformer): "transformer",
+                executor.submit(load_scheduler): "scheduler",
+                executor.submit(load_text_encoder): "text_encoder",
+                executor.submit(load_tokenizer): "tokenizer",
+            }
+            for future in as_completed(future_to_component.keys()):
+                component_name = future_to_component[future]
+                self.components[component_name] = future.result()
+        
+        # Create patchifier (simple instantiation, no need for concurrent loading)
         patchifier = SymmetricPatchifier(patch_size=1)
         
-        # Move models to device and convert to bfloat16
-        transformer = transformer.to(device).to(torch.bfloat16)
-        vae = vae.to(device).to(torch.bfloat16)
-        text_encoder = text_encoder.to(device).to(torch.bfloat16)
-        
-        # Create pipeline with None values for prompt enhancer components
+        # Create pipeline with models on CPU (don't move to device yet)
         self.pipeline = LTXVideoPipeline(
-            transformer=transformer,
+            transformer=self.components["transformer"],
             patchifier=patchifier,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            scheduler=scheduler,
-            vae=vae,
+            text_encoder=self.components["text_encoder"],
+            tokenizer=self.components["tokenizer"],
+            scheduler=self.components["scheduler"],
+            vae=self.components["vae"],
             prompt_enhancer_image_caption_model=None,
             prompt_enhancer_image_caption_processor=None,
             prompt_enhancer_llm_model=None,
             prompt_enhancer_llm_tokenizer=None
         )
-        
-        # Enable CPU offloading for VRAM optimization
-        self.pipeline = self.pipeline.to(device)
     
     def _load_image_to_tensor(self, 
                               image_data: bytes, 
@@ -639,8 +700,19 @@ class LTXVideoModel:
                 force_download=True
             )
             
-            # Re-initialize the pipeline
-            self._initialize_pipeline(local_model_path)
+            # Re-initialize the pipeline in two steps (CPU then GPU)
+            print("Loading model to CPU...")
+            self._initialize_pipeline_cpu(local_model_path)
+            
+            print("Moving model to GPU...")
+            device = "cuda"
+            # Move models to GPU and convert to bfloat16
+            self.components["transformer"] = self.components["transformer"].to(device).to(torch.bfloat16)
+            self.components["vae"] = self.components["vae"].to(device).to(torch.bfloat16)
+            self.components["text_encoder"] = self.components["text_encoder"].to(device).to(torch.bfloat16)
+            
+            # Update pipeline device
+            self.pipeline = self.pipeline.to(device)
             
             # Commit changes to volume
             model_volume.commit()
@@ -773,6 +845,32 @@ class LTXVideoModel:
     def info(self):
         """API endpoint for getting model information."""
         return self.get_model_info.remote()
+        
+    @modal.fastapi_endpoint()
+    def profile_info(self):
+        """API endpoint for getting current profile information."""
+        from datetime import datetime, timezone
+        
+        profile = os.environ.get("LTXV_PROFILE", "solo").lower()
+        current_hour = datetime.now(timezone.utc).hour
+        peak_hours_start, peak_hours_end = 9, 18
+        is_peak_hour = peak_hours_start <= current_hour < peak_hours_end
+        
+        # Get active container count
+        container_count = 1
+        if profile == "team" and is_peak_hour:
+            container_count = 3
+            
+        return {
+            "profile": profile,
+            "current_time_utc": datetime.now(timezone.utc).isoformat(),
+            "container_count": container_count,
+            "is_peak_hour": is_peak_hour,
+            "peak_hours": {
+                "start": peak_hours_start,
+                "end": peak_hours_end
+            }
+        }
     
     @modal.fastapi_endpoint(method="POST")
     def reload_model(self):
@@ -817,7 +915,7 @@ def main():
 
 
 # Utility function to create or initialize the volume
-@app.function(image=modal.Image.debian_slim())
+@app.function(image=image)
 def create_volume():
     """Create or ensure the model volume exists.
     
@@ -847,6 +945,84 @@ def create_volume():
         "name": "ltxv-model-weights",
         "size_mb": size_mb,
         "mount_path": MODEL_MOUNT_PATH
+    }
+
+
+# Initialize profile environment variable
+os.environ["LTXV_PROFILE"] = os.environ.get("LTXV_PROFILE", "solo").lower()
+
+# Dynamic container scaling based on profile and time of day
+@app.function(image=image, schedule=modal.Cron("0 * * * *"))  # Run at the start of every hour
+def update_warm_containers():
+    """Dynamically adjust warm containers based on profile and time of day."""
+    from datetime import datetime, timezone
+    
+    # Get active profile (default to "solo" if not specified)
+    profile = os.environ.get("LTXV_PROFILE", "solo").lower()
+    
+    # Solo profile always uses just 1 container (this is the default)
+    if profile == "solo":
+        print(f"Solo profile active. Setting warm containers to 1.")
+        LTXVideoModel.cls.keep_warm(1)
+        return {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "profile": "solo",
+            "container_count": 1
+        }
+    
+    # Team profile uses time-based scaling (only if explicitly chosen)
+    peak_hours_start, peak_hours_end = 9, 18
+    current_hour = datetime.now(timezone.utc).hour
+    
+    if peak_hours_start <= current_hour < peak_hours_end:
+        print(f"Team profile - Peak hours ({current_hour} UTC). Setting warm containers to 3.")
+        LTXVideoModel.cls.keep_warm(3)
+        container_count = 3
+    else:
+        print(f"Team profile - Off-peak hours ({current_hour} UTC). Setting warm containers to 1.")
+        LTXVideoModel.cls.keep_warm(1)
+        container_count = 1
+    
+    return {
+        "time": datetime.now(timezone.utc).isoformat(),
+        "profile": "team",
+        "current_hour": current_hour,
+        "is_peak_hour": peak_hours_start <= current_hour < peak_hours_end,
+        "container_count": container_count
+    }
+
+# API endpoint to set scaling profile
+@app.function(image=image)
+@modal.fastapi_endpoint(method="POST")
+def set_profile(profile: str = "solo"):
+    """Set scaling profile (solo or team)."""
+    if profile.lower() not in ["solo", "team"]:
+        return {"error": f"Invalid profile: {profile}. Must be 'solo' or 'team'."}
+    
+    # Update environment variable
+    os.environ["LTXV_PROFILE"] = profile.lower()
+    
+    # Immediately update container count
+    if profile.lower() == "solo":
+        LTXVideoModel.cls.keep_warm(1)
+        container_count = 1
+    else:
+        # For team profile, check time and set accordingly
+        from datetime import datetime, timezone
+        peak_hours_start, peak_hours_end = 9, 18
+        current_hour = datetime.now(timezone.utc).hour
+        
+        if peak_hours_start <= current_hour < peak_hours_end:
+            LTXVideoModel.cls.keep_warm(3)
+            container_count = 3
+        else:
+            LTXVideoModel.cls.keep_warm(1)
+            container_count = 1
+    
+    return {
+        "success": True,
+        "profile": profile.lower(),
+        "container_count": container_count
     }
 
 
